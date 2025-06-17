@@ -4,40 +4,24 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
+#include <fstream>
+#include <sstream>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-// Vertex Shader
-const char *vertexShaderSource = R"glsl(
-#version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec2 aTexCoord;
+std::string LoadFileToString(const std::string &path) {
+    std::ifstream file(path);
 
-out vec2 TexCoord;
+    if (!file) {
+        throw std::runtime_error("Failed to Open Shader File: " + path);
+    }
 
-uniform mat4 model;
-uniform mat4 view;
-uniform mat4 projection;
+    std::stringstream buffer;
+    buffer << file.rdbuf();
 
-void main() {
-    gl_Position = projection * view * model * vec4(aPos, 1.0);
-    TexCoord = aTexCoord;
+    return buffer.str();
 }
-)glsl";
-
-// Fragment Shader
-const char *fragmentShaderSource = R"glsl(
-#version 330 core
-out vec4 FragColor;
-
-in vec2 TexCoord;
-uniform sampler2D texture1;
-
-void main() {
-    FragColor = texture(texture1, TexCoord);
-}
-)glsl";
 
 GLuint CompileShader(GLenum type, const char *source) {
     GLuint shader = glCreateShader(type);
@@ -53,22 +37,49 @@ GLuint CompileShader(GLenum type, const char *source) {
     return shader;
 }
 
-GLuint CreateShaderProgram(const char *vs, const char *fs) {
-    GLuint vertex = CompileShader(GL_VERTEX_SHADER, vs);
-    GLuint fragment = CompileShader(GL_FRAGMENT_SHADER, fs);
+GLuint CreateShaderProgramFromFiles(const std::string &verPath, const std::string &fragPath) {
+    std::string vertSrc = LoadFileToString(verPath);
+    std::string fragSrc = LoadFileToString(fragPath);
+
+    auto compile = [](GLenum type, const char *src) -> GLuint {
+        GLuint s = glCreateShader(type);
+
+        glShaderSource(s, 1, &src, nullptr);
+        glCompileShader(s);
+
+        GLint ok;
+
+        glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+
+        if (!ok) {
+            char log[512];
+            glGetShaderInfoLog(s, 512, nullptr, log);
+            throw std::runtime_error("Shader Compile Error:\n" + std::string(log));
+        }
+
+        return s;
+    };
+
+    GLuint vert = compile(GL_VERTEX_SHADER, vertSrc.c_str());
+    GLuint frag = compile(GL_FRAGMENT_SHADER, fragSrc.c_str());
+
     GLuint program = glCreateProgram();
-    glAttachShader(program, vertex);
-    glAttachShader(program, fragment);
+    glAttachShader(program, vert);
+    glAttachShader(program, frag);
     glLinkProgram(program);
-    GLint success;
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-    if (!success) {
-        char info[512];
-        glGetProgramInfoLog(program, 512, nullptr, info);
-        std::cerr << "Shader link error: " << info << std::endl;
+
+    GLint ok;
+    glGetProgramiv(program, GL_LINK_STATUS, &ok);
+
+    if (!ok) {
+        char log[512];
+        glGetProgramInfoLog(program, 512, nullptr, log);
+        throw std::runtime_error("Program Link Error: " + std::string(log));
     }
-    glDeleteShader(vertex);
-    glDeleteShader(fragment);
+
+    glDeleteShader(vert);
+    glDeleteShader(frag);
+
     return program;
 }
 
@@ -131,7 +142,15 @@ int main(int argc, char *argv[]) {
     SDL_SetRelativeMouseMode(SDL_TRUE);
     SDL_GL_SetSwapInterval(1);
 
-    GLuint shader = CreateShaderProgram(vertexShaderSource, fragmentShaderSource);
+    GLuint shader = 0;
+    try {
+        shader = CreateShaderProgramFromFiles("shaders/basic.vert",
+                                              "shaders/basic.frag");
+    } catch (const std::exception &ex) {
+        std::cerr << ex.what() << '\n';
+        SDL_Quit();
+        return 1;
+    }
 
     GLuint VAO, VBO;
     glGenVertexArrays(1, &VAO);
@@ -153,7 +172,7 @@ int main(int argc, char *argv[]) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     int w, h, channels;
-    unsigned char *data = stbi_load("wall.jpg", &w, &h, &channels, 0);
+    unsigned char *data = stbi_load("/textures/wall.jpg", &w, &h, &channels, 0);
     if (data) {
         GLenum format = (channels == 4) ? GL_RGBA : GL_RGB;
         glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, 0, format, GL_UNSIGNED_BYTE, data);
